@@ -1,0 +1,27 @@
+{
+  "attendance_url": "https://gleneagles.myadrenalin.com/AdrenalinMax/#/",
+  "username": "114311",
+  "password": "your_password_here",
+  "use_playwright": true,
+  "report_path": "attendance_report.txt",
+  "screenshot_path": "attendance_screenshot.png",
+  "whatsapp_number": "",
+  "email": {
+    "enabled": false,
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "sender": "you@example.com",
+    "recipient": "recipient@example.com",
+    "username": "you@example.com",
+    "password": "your_smtp_password_or_app_password"
+  },
+  "attendance_selector": "text=Attendance",
+  "attendance_and_leave_selector": "text=Attendance & Leave",
+  "images": {
+    "username_field": "images/username_field.png",
+    "password_field": "images/password_field.png",
+    "login_button": "images/login_button.png",
+    "attendance_menu": "images/attendance_menu.png",
+    "attendance_and_leave": "images/attendance_and_leave.png"
+  }
+}

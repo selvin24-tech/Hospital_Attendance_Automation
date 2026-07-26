@@ -1,0 +1,5 @@
+pyautogui
+pyperclip
+pillow
+pywhatkit
+playwright
