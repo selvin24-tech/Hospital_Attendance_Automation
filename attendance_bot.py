@@ -1,6 +1,10 @@
 from datetime import datetime
-from openpyxl import Workbook
 import os
+import time
+
+import pyautogui
+import pyperclip
+from openpyxl import Workbook
 
 from dotenv import load_dotenv
 from playwright.sync_api import Playwright, sync_playwright
@@ -13,9 +17,14 @@ PASSWORD = os.getenv("HR_PASSWORD")
 
 def run(playwright: Playwright):
 
-    browser = playwright.chromium.launch(headless=False)
+    browser = playwright.chromium.launch(
+    headless=False,
+    args=["--start-maximized"]
+    )
 
-    context = browser.new_context()
+    context = browser.new_context(
+    no_viewport=True
+    )
 
     page = context.new_page()
 
@@ -27,6 +36,7 @@ def run(playwright: Playwright):
     page.get_by_role("button", name="Login").click()
 
     page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(3000)
 
     # Attendance Menu
     page.get_by_label("Attendance, claims & requests").click()
@@ -41,42 +51,80 @@ def run(playwright: Playwright):
     # Tick Show Time
     frame.get_by_role("checkbox", name="Show time").check()
 
-    # Wait for Show Time checkbox
-    frame.get_by_role("checkbox", name="Show time").wait_for(timeout=15000)
+    # Click Refresh
+    frame.get_by_text("Refresh").click()
 
-# Tick Show Time
-    frame.get_by_role("checkbox", name="Show time").check()
+    # Wait for the calendar to reload
+    page.wait_for_timeout(5000)
 
-# Wait a little longer after checking
-    page.wait_for_timeout(8000)
+    # Create screenshots folder if it doesn't exist
+    os.makedirs("screenshots", exist_ok=True)
 
-    # Date & Time
-    now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
-    current_datetime = now.strftime("%Y-%m-%d %H:%M")
+    today = datetime.now().strftime("%Y-%m-%d")
 
-    # Screenshot
-    page.screenshot(
-        path=f"screenshots/attendance_{today}.png",
-        full_page=True
+    frame.locator("body").screenshot(
+    path=f"screenshots/attendance_{today}.png"
     )
 
-    # Excel
+    print("✅ Screenshot saved.")
+
+    # Click inside attendance page
+    frame.locator("body").click()
+    time.sleep(1)
+
+    # Copy everything
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(1)
+
+    pyautogui.hotkey("ctrl", "c")
+    time.sleep(2)
+
+    # Read clipboard
+    clipboard_data = pyperclip.paste()
+
+    # Create Excel workbook
     wb = Workbook()
     ws = wb.active
-    ws.title = "Daily Report"
+    ws.title = "Attendance"
 
-    ws.append(["Date & Time", "Information", "Comment"])
-    ws.append([
-        current_datetime,
-        "Attendance & Leave Page",
-        "Show Time Enabled"
-    ])
+    lines = [line.strip() for line in clipboard_data.splitlines() if line.strip()]
 
-    wb.save(f"reports/daily_report_{today}.xlsx")
+    ws.append(["Date", "In Time", "Out Time", "Working Hours"])
 
-    print("✅ Screenshot Saved")
-    print("✅ Excel Saved")
+    i = 0
+
+    while i < len(lines):
+
+        # Look for a day number like 01, 02, 15...
+        if lines[i].isdigit() and len(lines[i]) <= 2:
+
+            # Make sure there are enough lines left
+            if i + 3 < len(lines):
+
+                # The 4th line must contain "Hrs"
+                if "Hrs" in lines[i + 3]:
+
+                    date = lines[i]
+                    in_time = lines[i + 1]
+                    out_time = lines[i + 2]
+                    hours = lines[i + 3]
+
+                    ws.append([date, in_time, out_time, hours])
+
+                    i += 4
+                    continue
+
+        i += 1
+
+        os.makedirs("reports", exist_ok=True)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    save_path = os.path.join("reports", f"Attendance_{today}.xlsx")
+
+    wb.save(save_path)
+
+    print("✅ Attendance exported successfully!")
+    print(save_path)
 
     context.close()
     browser.close()
