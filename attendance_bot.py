@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 import json
 import os
 import smtplib
+import sys
 import time
 
 from dotenv import find_dotenv, load_dotenv
@@ -64,8 +65,7 @@ def extract_attendance_from_image(image_path: str) -> list[dict]:
                 "content": [
                     {"type": "text", "text": prompt},
                     {
-                        "type": "image_url",
-                        "image_url": {
+                        "type": "image_url": {
                             "url": f"data:image/png;base64,{base64_image}"
                         },
                     },
@@ -175,35 +175,70 @@ def send_email_report(summary: str, excel_path: str):
 
 
 def run(playwright: Playwright):
+    if not USERNAME or not PASSWORD:
+        print("❌ Error: Missing credentials in environment variables!")
+        sys.exit(1)
+
+    os.makedirs("screenshots", exist_ok=True)
 
     # Launch browser configured for server environments
     browser = playwright.chromium.launch(headless=True)
-
-    # Use explicit viewport resolution for headless rendering
     context = browser.new_context(viewport={"width": 1920, "height": 1080})
     page = context.new_page()
 
-    page.goto("https://gleneagles.myadrenalin.com/AdrenalinMax/#/")
+    print("🔑 Navigating to login page...")
+    page.goto("https://gleneagles.myadrenalin.com/AdrenalinMax/#/", timeout=60000)
 
-    # Login safely with string fallbacks
+    # Fill login details safely
     page.get_by_role("textbox", name="User ID").fill(str(USERNAME))
     page.get_by_role("textbox", name="Password").fill(str(PASSWORD))
     page.get_by_role("button", name="Login").click()
 
-    page.wait_for_load_state("networkidle")
+    # Wait for post-login dashboard loading
+    print("⏳ Waiting for dashboard load...")
+    page.wait_for_timeout(7000)
+    page.screenshot(path="screenshots/debug_after_login.png")
+
+    # Resilient Navigation using force clicks and broad text matching
+    print("📍 Clicking Attendance sidebar menu...")
+    menu_selectors = [
+        "text=Attendance, claims & requests",
+        "text=Attendance & leave",
+        "text=Attendance",
+        "[aria-label*='Attendance']",
+    ]
+
+    clicked = False
+    for selector in menu_selectors:
+        try:
+            loc = page.locator(selector).first
+            if loc.is_visible(timeout=3000):
+                loc.click(force=True, timeout=5000)
+                clicked = True
+                print(f"✅ Clicked menu via selector: {selector}")
+                break
+        except Exception:
+            continue
+
+    if not clicked:
+        # Final fallback: click any element containing 'Attendance'
+        page.locator("*:has-text('Attendance')").last.click(force=True)
+
     page.wait_for_timeout(3000)
 
-    # Attendance Menu
-    page.get_by_label("Attendance, claims & requests").click()
-    page.locator("a").filter(has_text="Attendance & leave").click()
+    # Sub-menu click
+    try:
+        page.locator("text=Attendance & leave").first.click(force=True, timeout=5000)
+    except Exception:
+        pass
 
-    # Attendance iframe
-    frame = page.locator("#commonFormRender").content_frame
+    # Handle iframe content
+    print("🖼️ Accessing Attendance frame...")
+    frame_element = page.wait_for_selector("#commonFormRender", timeout=20000)
+    frame = frame_element.content_frame()
 
     # Wait for Show Time checkbox
     frame.get_by_role("checkbox", name="Show time").wait_for(timeout=15000)
-
-    # Tick Show Time
     frame.get_by_role("checkbox", name="Show time").check()
 
     # Click Refresh
@@ -213,12 +248,11 @@ def run(playwright: Playwright):
     page.wait_for_timeout(5000)
 
     # Save screenshot directly from iframe
-    os.makedirs("screenshots", exist_ok=True)
     today = datetime.now().strftime("%Y-%m-%d")
     screenshot_path = f"screenshots/attendance_{today}.png"
 
     frame.locator("body").screenshot(path=screenshot_path)
-    print(f"✅ Screenshot saved: {screenshot_path}")
+    print(f"✅ Calendar screenshot saved: {screenshot_path}")
 
     # Process screenshot using AI Vision
     print("🤖 Processing calendar colors and attendance with OpenAI Vision...")
