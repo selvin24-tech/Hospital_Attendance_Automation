@@ -65,7 +65,8 @@ def extract_attendance_from_image(image_path: str) -> list[dict]:
                 "content": [
                     {"type": "text", "text": prompt},
                     {
-                        "type": "image_url": {
+                        "type": "image_url",
+                        "image_url": {
                             "url": f"data:image/png;base64,{base64_image}"
                         },
                     },
@@ -86,7 +87,7 @@ def extract_attendance_from_image(image_path: str) -> list[dict]:
 
 
 def generate_custom_email_summary(records: list[dict]) -> str:
-    """Generates the specific monthly breakdown requested."""
+    """Generates the specific monthly breakdown requested using GPT-4o."""
     api_key = os.getenv("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
@@ -176,31 +177,33 @@ def send_email_report(summary: str, excel_path: str):
 
 def run(playwright: Playwright):
     if not USERNAME or not PASSWORD:
-        print("❌ Error: Missing credentials in environment variables!")
+        print("❌ Error: Missing HR_USERNAME or HR_PASSWORD in environment variables!")
         sys.exit(1)
 
     os.makedirs("screenshots", exist_ok=True)
+    os.makedirs("reports", exist_ok=True)
 
-    # Launch browser configured for server environments
-    browser = playwright.chromium.launch(headless=True)
+    # Launch browser (set headless=True for VPS/n8n environments)
+    is_headless = os.getenv("HEADLESS", "true").lower() == "true"
+    print(f"🌐 Launching Browser (Headless: {is_headless})...")
+    
+    browser = playwright.chromium.launch(headless=is_headless)
     context = browser.new_context(viewport={"width": 1920, "height": 1080})
     page = context.new_page()
 
     print("🔑 Navigating to login page...")
     page.goto("https://gleneagles.myadrenalin.com/AdrenalinMax/#/", timeout=60000)
 
-    # Fill login details safely
+    # Login sequence
     page.get_by_role("textbox", name="User ID").fill(str(USERNAME))
     page.get_by_role("textbox", name="Password").fill(str(PASSWORD))
     page.get_by_role("button", name="Login").click()
 
-    # Wait for post-login dashboard loading
-    print("⏳ Waiting for dashboard load...")
+    print("⏳ Logging in, waiting for dashboard...")
     page.wait_for_timeout(7000)
-    page.screenshot(path="screenshots/debug_after_login.png")
 
-    # Resilient Navigation using force clicks and broad text matching
-    print("📍 Clicking Attendance sidebar menu...")
+    # Sidebar Navigation
+    print("📍 Navigating to Attendance section...")
     menu_selectors = [
         "text=Attendance, claims & requests",
         "text=Attendance & leave",
@@ -221,52 +224,46 @@ def run(playwright: Playwright):
             continue
 
     if not clicked:
-        # Final fallback: click any element containing 'Attendance'
         page.locator("*:has-text('Attendance')").last.click(force=True)
 
     page.wait_for_timeout(3000)
 
-    # Sub-menu click
+    # Sub-menu click if required
     try:
         page.locator("text=Attendance & leave").first.click(force=True, timeout=5000)
     except Exception:
         pass
 
-    # Handle iframe content
-    print("🖼️ Accessing Attendance frame...")
+    # Access iframe & capture calendar
+    print("🖼️ Opening Attendance Frame...")
     frame_element = page.wait_for_selector("#commonFormRender", timeout=20000)
     frame = frame_element.content_frame()
 
-    # Wait for Show Time checkbox
     frame.get_by_role("checkbox", name="Show time").wait_for(timeout=15000)
     frame.get_by_role("checkbox", name="Show time").check()
-
-    # Click Refresh
     frame.get_by_text("Refresh").click()
 
-    # Wait for calendar content to render
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(4000)
 
     # Save screenshot directly from iframe
     today = datetime.now().strftime("%Y-%m-%d")
     screenshot_path = f"screenshots/attendance_{today}.png"
-
     frame.locator("body").screenshot(path=screenshot_path)
-    print(f"✅ Calendar screenshot saved: {screenshot_path}")
+    print(f"📸 Screenshot saved: {os.path.abspath(screenshot_path)}")
 
-    # Process screenshot using AI Vision
-    print("🤖 Processing calendar colors and attendance with OpenAI Vision...")
+    # Process screenshot using OpenAI Vision
+    print("🤖 Analyzing screenshot with OpenAI Vision...")
     records = extract_attendance_from_image(screenshot_path)
 
-    # Generate Actionable Summary
-    print("📊 Generating Detailed Attendance Summary Report...")
+    # Generate summary report
+    print("📊 Generating Detailed Attendance Summary...")
     summary = generate_custom_email_summary(records)
 
     print("\n--- GENERATED EMAIL SUMMARY ---")
     print(summary)
     print("--------------------------------\n")
 
-    # Create Excel workbook
+    # Create Excel Report
     wb = Workbook()
 
     # Sheet 1: Logs
@@ -286,9 +283,7 @@ def run(playwright: Playwright):
         )
 
     # Header styling
-    header_fill = PatternFill(
-        start_color="1F4E79", end_color="1F4E79", fill_type="solid"
-    )
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
 
     for cell in ws_data[1]:
@@ -301,7 +296,7 @@ def run(playwright: Playwright):
         col_letter = get_column_letter(col[0].column)
         ws_data.column_dimensions[col_letter].width = max(max_len + 4, 15)
 
-    # Sheet 2: Action Summary Report
+    # Sheet 2: Action Summary
     ws_summary = wb.create_sheet(title="Action Report")
     ws_summary.append(["Attendance Action & Regularization Report"])
     ws_summary.cell(row=1, column=1).font = Font(
@@ -315,17 +310,17 @@ def run(playwright: Playwright):
 
     ws_summary.column_dimensions["A"].width = 80
 
-    # Save Excel
-    os.makedirs("reports", exist_ok=True)
+    # Save workbook
     excel_path = os.path.join("reports", f"Attendance_{today}.xlsx")
     wb.save(excel_path)
-    print(f"📁 Excel Report generated at: {excel_path}")
+    print(f"📁 Excel Report generated at: {os.path.abspath(excel_path)}")
 
-    # Send Email Report
+    # Send report via email
     send_email_report(summary, excel_path)
 
     context.close()
     browser.close()
+    print("✅ Run completed successfully!")
 
 
 if __name__ == "__main__":
