@@ -19,13 +19,13 @@ from playwright.sync_api import Playwright, sync_playwright
 # Force load .env file dynamically
 load_dotenv(find_dotenv(), override=True)
 
-USERNAME = os.getenv("HR_USERNAME")
-PASSWORD = os.getenv("HR_PASSWORD")
+USERNAME = os.getenv("HR_USERNAME") or os.getenv("USERNAME") or ""
+PASSWORD = os.getenv("HR_PASSWORD") or os.getenv("PASSWORD") or ""
 
 # Email Settings
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SENDER_APP_PASSWORD = os.getenv("SENDER_APP_PASSWORD")
-RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL") or ""
+SENDER_APP_PASSWORD = os.getenv("SENDER_APP_PASSWORD") or ""
+RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL") or ""
 
 
 def extract_attendance_from_image(image_path: str) -> list[dict]:
@@ -176,21 +176,18 @@ def send_email_report(summary: str, excel_path: str):
 
 def run(playwright: Playwright):
 
-    # Launch full screen without viewport restrictions that squeeze the frame
-    browser = playwright.chromium.launch(
-        headless=False,
-        args=["--start-maximized"]
-    )
+    # Launch browser configured for server environments
+    browser = playwright.chromium.launch(headless=True)
 
-    # Use null viewport to inherit maximum OS screen width dynamically
-    context = browser.new_context(no_viewport=True)
+    # Use explicit viewport resolution for headless rendering
+    context = browser.new_context(viewport={"width": 1920, "height": 1080})
     page = context.new_page()
 
     page.goto("https://gleneagles.myadrenalin.com/AdrenalinMax/#/")
 
-    # Login
-    page.get_by_role("textbox", name="User ID").fill(USERNAME)
-    page.get_by_role("textbox", name="Password").fill(PASSWORD)
+    # Login safely with string fallbacks
+    page.get_by_role("textbox", name="User ID").fill(str(USERNAME))
+    page.get_by_role("textbox", name="Password").fill(str(PASSWORD))
     page.get_by_role("button", name="Login").click()
 
     page.wait_for_load_state("networkidle")
@@ -215,7 +212,7 @@ def run(playwright: Playwright):
     # Wait for calendar content to render
     page.wait_for_timeout(5000)
 
-    # Save screenshot directly from iframe without extra CSS transformations
+    # Save screenshot directly from iframe
     os.makedirs("screenshots", exist_ok=True)
     today = datetime.now().strftime("%Y-%m-%d")
     screenshot_path = f"screenshots/attendance_{today}.png"
@@ -297,5 +294,6 @@ def run(playwright: Playwright):
     browser.close()
 
 
-with sync_playwright() as playwright:
-    run(playwright)
+if __name__ == "__main__":
+    with sync_playwright() as playwright:
+        run(playwright)
